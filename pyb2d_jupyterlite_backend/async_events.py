@@ -80,27 +80,3 @@ class DomEvent(Event):
         self._future = asyncio.Future()
 
         return self._future
-
-
-# d = IPyEvent(
-#          source=self.multi_canvas, watched_events=["keydown", "keyup", "wheel"]
-#      )
-
-#      def handle_event(event):
-
-#          scale = self.debug_draw.scale
-#          etype = event["event"]
-#          if etype == "wheel":
-#              if event["deltaY"] > 0:
-#                  self.debug_draw.scale = scale * 0.9
-#              elif event["deltaY"] < 0:
-#                  self.debug_draw.scale = scale * 1.1
-#              # self.event_info.value = f"WHEEEL {event['deltaY']}"
-#          elif etype == "keyup":
-#              k = event["key"]
-#              self.testbed.on_keyboard_up(k)
-#          elif etype == "keydown":
-#              k = event["key"]
-#              self.testbed.on_keyboard_down(k)
-
-#      d.on_dom_event(handle_event)

@@ -193,9 +193,11 @@ class JupyterAsyncGui(GuiBase):
 
         done, not_done = await asyncio.wait(event_futures, timeout=0.0001)
 
-        while not self.paused:
+        while not self._exit:
+
             t0 = time.time()
-            self._single_step()
+            if not self.paused:
+                self._single_step()
             t1 = time.time()
             delta = t1 - t0
             if delta < self._dt_s:
@@ -229,8 +231,113 @@ class JupyterAsyncGui(GuiBase):
 
     def _setup_ipywidgets_gui(self):
 
-        IPython.display.display(self.canvas, self.out)  # , self.tab)
-        # IPython.display.display(self.event_info)
+        # buttons
+        start_btn = Button(icon="play")
+        step_forward_btn = Button(icon="step-forward")
+        step_forward_btn.disabled = True
+        pause_btn = Button(icon="pause")
+        reset_btn = Button(icon="stop")
+
+        zoom_in_btn = Button(icon="search-plus")
+        zoom_out_btn = Button(icon="search-minus")
+
+        # sliders speed / fps
+        fps_slider = ipywidgets.IntSlider(value=self._fps, min=1, max=100, step=1)
+
+        speed_slider = ipywidgets.FloatSlider(value=1.0, min=0.1, max=10.0, step=0.1)
+
+        def pause(btn=None):
+            if not self.paused:
+                step_forward_btn.disabled = False
+                self.paused = True
+
+        pause_btn.on_click(pause)
+
+        def start(btn=None):
+            step_forward_btn.disabled = True
+            if self.paused:
+                self.paused = False
+            if self.reached_end:
+                self.reached_end = False
+
+        start_btn.on_click(start)
+
+        def step_forward(btn=None):
+            self._single_step()
+
+        step_forward_btn.on_click(step_forward)
+
+        def reset(btn):
+            pause()
+            self.make_testbed()
+            self._single_step()
+            start()
+
+        reset_btn.on_click(reset)
+
+        def zoom_in(btn=None):
+            s = self.debug_draw.scale
+            self.debug_draw.scale = s * 1.2
+
+        zoom_in_btn.on_click(zoom_in)
+
+        def zoom_out(btn=None):
+            s = self.debug_draw.scale
+            s /= 1.2
+            s = max(1, s)
+            self.debug_draw.scale = s
+
+        zoom_out_btn.on_click(zoom_out)
+
+        draw_checkboxes = dict(
+            shapes=ipywidgets.Checkbox(value=True),
+            joints=ipywidgets.Checkbox(value=True),
+            aabb=ipywidgets.Checkbox(value=False),
+            com=ipywidgets.Checkbox(value=False),
+            pairs=ipywidgets.Checkbox(value=False),
+        )
+
+        def on_flag_change(v, flag):
+            v = v["new"]
+            if v:
+                self.debug_draw.append_flags(flag)
+            else:
+                self.debug_draw.clear_flags([flag])
+
+            if self.paused:
+                self._draw_world(self.debug_draw._canvas)
+
+        # play buttons
+        play_buttons = HBox([start_btn, step_forward_btn, pause_btn, reset_btn])
+
+        # zoom
+        zoom_buttons = HBox([zoom_in_btn, zoom_out_btn])
+
+        # debug draw flags
+        items = []
+        flags = ["shape", "joint", "aabb", "pair", "center_of_mass", "particle"]
+        for f in flags:
+            label = ipywidgets.Label(value=f"Draw {f} :")
+            checkbox = ipywidgets.Checkbox(value=bool(f in self._debug_draw_flags))
+            checkbox.observe(functools.partial(on_flag_change, flag=f), names="value")
+            items.append(label)
+            items.append(checkbox)
+        draw_flags = ipywidgets.GridBox(
+            items, layout=ipywidgets.Layout(grid_template_columns="repeat(4, 200px)")
+        )
+
+        # tab organizing everything
+        children = [play_buttons, zoom_buttons, draw_flags]
+        tab = ipywidgets.Tab()
+        tab.children = children
+        for i, t in enumerate(["Stepping", "Zoom", "DebugDrawFlags"]):
+            tab.set_title(i, str(t))
+        # display
+        self.event_info = HTML("Event info")
+        IPython.display.display(self.out)
+        with self.out:
+            IPython.display.display(self.canvas, tab)
+            # IPython.display.display(self.event_info)
 
     def _single_step(self):
 
