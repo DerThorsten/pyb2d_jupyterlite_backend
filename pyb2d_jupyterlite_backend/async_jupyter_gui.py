@@ -142,6 +142,23 @@ class JupyterAsyncGui(GuiBase):
                     translate[1] - dy,
                 )
 
+    def on_dom_event(self, event):
+
+        scale = self.debug_draw.scale
+        etype = event["event"]
+        if etype == "wheel":
+            if event["deltaY"] > 0:
+                self.debug_draw.scale = scale * 0.9
+            elif event["deltaY"] < 0:
+                self.debug_draw.scale = scale * 1.1
+            # self.event_info.value = f"WHEEEL {event['deltaY']}"
+        elif etype == "keyup":
+            k = event["key"]
+            self.testbed.on_keyboard_up(k)
+        elif etype == "keydown":
+            k = event["key"]
+            self.testbed.on_keyboard_down(k)
+
     def start_ui(self):
         # make the canvas
         self.canvas = Canvas(width=self.resolution[0], height=self.resolution[1])
@@ -156,6 +173,7 @@ class JupyterAsyncGui(GuiBase):
             MouseDownEvent(widget=self.canvas, callback=self.on_mouse_down),
             MouseMoveEvent(widget=self.canvas, callback=self.on_mouse_move),
             MouseUpEvent(widget=self.canvas, callback=self.on_mouse_up),
+            DomEvent(widget=self.canvas, callback=self.on_dom_event),
         ]
 
         # d = IPyEvent(
@@ -199,6 +217,12 @@ class JupyterAsyncGui(GuiBase):
                 # assert False
                 # self.out.append_stdout(f"{len(done)=} {len(not_done)=}\n")
                 not_done = list(not_done) + [f.result().get_future() for f in done]
+
+            t1 = time.time()
+            delta = t1 - t0
+            if delta < self._dt_s:
+                timeout = self._dt_s - delta
+                await asyncio.sleep(delta)
 
             if self._exit:
                 break
