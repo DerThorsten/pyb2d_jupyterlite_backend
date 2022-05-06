@@ -15,19 +15,7 @@ from ipywidgets import Label, HTML, Button, HBox, VBox
 from .async_events import *
 
 
-def wait_for_change(widget, value):
-    future = asyncio.Future()
-
-    def getvalue(change):
-        # make the new value available
-        future.set_result(change.new)
-        widget.unobserve(getvalue, value)
-
-    widget.observe(getvalue, value)
-    return future
-
-
-_id_to_gui = dict()
+_all_guis = set()
 
 
 class JupyterAsyncGui(GuiBase):
@@ -43,10 +31,9 @@ class JupyterAsyncGui(GuiBase):
         if settings.id is None:
             settings.id = testbed_cls
 
-        if settings.id in _id_to_gui:
-            old_self = _id_to_gui[settings.id]
-            old_self._terminate()
-        _id_to_gui[settings.id] = self
+        for g in _all_guis:
+            g._stop = True
+        _all_guis.add(self)
 
         self.settings = settings
         self.resolution = self.settings.resolution
@@ -70,7 +57,8 @@ class JupyterAsyncGui(GuiBase):
         self._debug_draw_flags = self.settings.get_debug_draw_flags()
 
         # flag to stop loop
-        self._exit = False
+        self._stop = False
+        self._stopped_by_others = False
 
         self.scale = settings.scale
         self.translate = settings.translate
@@ -82,8 +70,8 @@ class JupyterAsyncGui(GuiBase):
         self._mouse_is_down = False
 
     def _terminate(self):
-        if not self.paused:
-            self.paused = True
+        if not self._stop:
+            self._stop = True
 
     def make_testbed(self):
 
@@ -176,58 +164,36 @@ class JupyterAsyncGui(GuiBase):
             DomEvent(widget=self.canvas, callback=self.on_dom_event),
         ]
 
-        # d = IPyEvent(
-
-        #     source=self.canvas, watched_events=["keydown", "keyup", "wheel"]
-        # )
         return self
+
+    def run_async(self):
+        return asyncio.ensure_future(self._loop())
 
     async def _loop(self):
         if self.reached_end:
             self.reached_end = False
 
-        event_futures = [e.get_future() for e in self._events]
-        # wait_for_pause_future = wait_for_change(slider, 'value')
-        # Event loop
-        ii = 0
+        not_done = [e.get_future() for e in self._events]
 
-        done, not_done = await asyncio.wait(event_futures, timeout=0.0001)
+        while not self._stop:
 
-        while not self._exit:
-
-            t0 = time.time()
             if not self.paused:
+                t0 = time.time()
                 self._single_step()
-            t1 = time.time()
-            delta = t1 - t0
-            if delta < self._dt_s:
-                timeout = self._dt_s - delta
+                t1 = time.time()
+                delta = t1 - t0
+                if delta < self._dt_s:
+                    timeout = self._dt_s - delta
+                else:
+                    timeout = 0.0001
+                done, not_done = await asyncio.wait(list(not_done), timeout=timeout)
+
+                if len(done) >= 1:
+                    not_done = list(not_done) + [f.result().get_future() for f in done]
             else:
-                timeout = 0.0001
-            done, not_done = await asyncio.wait(list(not_done), timeout=timeout)
-            ii += 1
+                await asyncio.sleep(self._dt_s)
 
-            # if ii % 1 == 0:
-            #     #self.fantasy
-            #     # self.out.clear_output(wait=True)
-            #     with self.out:
-            #         self.out.append_stdout(f"#done {len(done)} #not_done {len(not_done)}\n")
-            #         #print("d",done, "nd",not_done)
-
-            # in case of any event
-            if len(done) >= 1:
-                # assert False
-                # self.out.append_stdout(f"{len(done)=} {len(not_done)=}\n")
-                not_done = list(not_done) + [f.result().get_future() for f in done]
-
-            t1 = time.time()
-            delta = t1 - t0
-            if delta < self._dt_s:
-                timeout = self._dt_s - delta
-                await asyncio.sleep(delta)
-
-            if self._exit:
-                break
+        self.reached_end = True
 
     def _setup_ipywidgets_gui(self):
 
@@ -236,7 +202,7 @@ class JupyterAsyncGui(GuiBase):
         step_forward_btn = Button(icon="step-forward")
         step_forward_btn.disabled = True
         pause_btn = Button(icon="pause")
-        reset_btn = Button(icon="stop")
+        stop_btn = Button(icon="stop")
 
         zoom_in_btn = Button(icon="search-plus")
         zoom_out_btn = Button(icon="search-minus")
@@ -254,11 +220,16 @@ class JupyterAsyncGui(GuiBase):
         pause_btn.on_click(pause)
 
         def start(btn=None):
+
+            self._stop = False
+            pause_btn.disabled = False
             step_forward_btn.disabled = True
-            if self.paused:
-                self.paused = False
             if self.reached_end:
                 self.reached_end = False
+                self.run_async()
+
+            if self.paused:
+                self.paused = False
 
         start_btn.on_click(start)
 
@@ -267,13 +238,14 @@ class JupyterAsyncGui(GuiBase):
 
         step_forward_btn.on_click(step_forward)
 
-        def reset(btn):
-            pause()
+        def stop(btn):
+            self._stop = True
             self.make_testbed()
             self._single_step()
-            start()
+            step_forward_btn.disabled = True
+            pause_btn.disabled = True
 
-        reset_btn.on_click(reset)
+        stop_btn.on_click(stop)
 
         def zoom_in(btn=None):
             s = self.debug_draw.scale
@@ -308,7 +280,7 @@ class JupyterAsyncGui(GuiBase):
                 self._draw_world(self.debug_draw._canvas)
 
         # play buttons
-        play_buttons = HBox([start_btn, step_forward_btn, pause_btn, reset_btn])
+        play_buttons = HBox([start_btn, step_forward_btn, pause_btn, stop_btn])
 
         # zoom
         zoom_buttons = HBox([zoom_in_btn, zoom_out_btn])
