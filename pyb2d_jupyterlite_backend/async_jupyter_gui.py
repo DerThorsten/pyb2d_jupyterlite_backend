@@ -164,7 +164,7 @@ class JupyterAsyncGui(GuiBase):
             DomEvent(widget=self.canvas, callback=self.on_dom_event),
         ]
 
-        return self
+        return asyncio.ensure_future(self._loop())
 
     def run_async(self):
         return asyncio.ensure_future(self._loop())
